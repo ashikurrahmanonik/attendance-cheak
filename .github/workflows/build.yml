@@ -103,6 +103,7 @@ jobs:
             mkdir -p site/$r
             cp "$P/src/$r.html" site/$r/index.html
             cp "$P"/src/*.js "$P"/src/*.png site/$r/
+            cp "$P/src/manifest-$r.json" site/$r/manifest.json
           done
           echo '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:20px sans-serif;padding:24px"><p><a href="student/">Student</a></p><p><a href="admin/">Admin</a></p>' > site/index.html
       - uses: actions/configure-pages@v5
