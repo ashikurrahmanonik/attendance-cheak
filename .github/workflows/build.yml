@@ -1,53 +1,86 @@
-name: Build APKs
+name: Build Apps
 on:
   push:
-    tags: ['v*']
+    paths: ['project.zip', '.github/workflows/build.yml']
   workflow_dispatch:
 permissions:
   contents: write
+  pages: write
+  id-token: write
+env:
+  VER: 1.0.${{ github.run_number }}
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         role: [admin, student]
     steps:
       - uses: actions/checkout@v4
+      - name: Extract project.zip
+        run: |
+          [ -f project.zip ] || { echo "::error::project.zip repo er root e nai"; exit 1; }
+          unzip -q project.zip -d proj
+          P=$(dirname "$(find proj -name package.json -not -path '*/node_modules/*' | head -1)")
+          echo "APP=$GITHUB_WORKSPACE/$P" >> $GITHUB_ENV
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
-      - run: npm install
-      - name: Prepare web
+      - name: Build APK
         run: |
+          cd "$APP"
+          npm install
           mkdir www
           cp src/${{ matrix.role }}.html www/index.html
           cp src/common.js www/common.js
-          sed -i "s#REPO=\"[^\"]*\"#REPO=\"${{ github.repository }}\"#" www/common.js
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then sed -i "s#VERSION=\"[^\"]*\"#VERSION=\"${GITHUB_REF_NAME#v}\"#" www/common.js; fi
-      - name: Android project
-        run: |
+          sed -i "s#REPO=\"[^\"]*\"#REPO=\"${{ github.repository }}\"#;s#VERSION=\"[^\"]*\"#VERSION=\"$VER\"#" www/common.js
           npx cap init "Attendance ${{ matrix.role }}" com.attendance.${{ matrix.role }} --web-dir www
           npx cap add android
-          M=android/app/src/main/AndroidManifest.xml
-          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><application#' $M
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><application#' android/app/src/main/AndroidManifest.xml
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/;s/versionName \"1.0\"/versionName \"$VER\"/" android/app/build.gradle
           npx cap sync android
-      - name: Fixed signing key (needed so updates install over old version)
-        run: |
           mkdir -p ~/.android
-          if [ -f debug.keystore ]; then cp debug.keystore ~/.android/debug.keystore; else echo "::warning::debug.keystore missing - updates will not install over old APK"; fi
-      - name: Build
-        working-directory: android
-        run: chmod +x gradlew && ./gradlew assembleDebug
-      - run: cp android/app/build/outputs/apk/debug/app-debug.apk ${{ matrix.role }}.apk
+          if [ -f debug.keystore ]; then cp debug.keystore ~/.android/debug.keystore; else keytool -genkey -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"; fi
+          cd android && chmod +x gradlew && ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/${{ matrix.role }}.apk"
       - uses: actions/upload-artifact@v4
-        with: { name: "${{ matrix.role }}", path: "${{ matrix.role }}.apk" }
+        with:
+          name: ${{ matrix.role }}
+          path: ${{ matrix.role }}.apk
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with: { path: out, merge-multiple: true }
       - uses: softprops/action-gh-release@v2
-        with: { files: "out/*.apk" }
+        with:
+          tag_name: v${{ env.VER }}
+          name: Version ${{ env.VER }}
+          target_commitish: ${{ github.sha }}
+          files: out/*.apk
+  pages:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build web site
+        run: |
+          unzip -q project.zip -d proj
+          P=$(dirname "$(find proj -name package.json -not -path '*/node_modules/*' | head -1)")
+          for r in admin student; do
+            mkdir -p site/$r
+            cp "$P/src/$r.html" site/$r/index.html
+            cp "$P/src/common.js" site/$r/common.js
+          done
+          echo '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:20px sans-serif;padding:24px"><p><a href="student/">Student</a></p><p><a href="admin/">Admin</a></p>' > site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: d
+        uses: actions/deploy-pages@v4
