@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student</title></head><body><div id="app"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module">
+import {db,$,today,myIP,esc,css,notify,checkUpdate,doc,getDoc,onSnapshot,collection,query,orderBy,limit} from './common.js';
+css();
+let s=JSON.parse(localStorage.stu||'null'),timer;
+const app=$('#app');
+function login(msg=''){
+  app.innerHTML=`<div class="card"><h2>Student Login</h2><input id="i" placeholder="Student ID"><input id="p" type="tel" placeholder="Mobile number"><button id="go">Login</button><p class="m">${msg}</p></div>`;
+  $('#go').onclick=async()=>{
+    try{
+      const id=$('#i').value.trim().replace(/\//g,'');
+      const d=id&&await getDoc(doc(db,'students',id));
+      if(!d||!d.exists()||d.data().phone!==$('#p').value.trim())return login('❌ ID বা মোবাইল ভুল');
+      s={id,...d.data()};localStorage.stu=JSON.stringify(s);localStorage.seen=Date.now();home();
+    }catch{login('❌ Internet সমস্যা')}
+  };
+}
+function home(){
+  app.innerHTML=`<div class="card" style="text-align:center">${s.photo?`<img class="av" src="${esc(s.photo)}">`:''}<h3>${esc(s.name)}</h3><p class="m">ID ${esc(s.id)} · Batch ${esc(s.batch)}</p><b id="st"></b><br><br><div id="qr" style="display:inline-block;background:#fff;padding:10px;border-radius:8px"></div><p class="m">QR প্রতি ২০ সেকেন্ডে বদলায়। ক্লাসের Wi-Fi তে থেকে এডমিনকে স্ক্যান করান।</p></div><h3>📢 Announcements</h3><div id="an"></div><button id="out" class="sec">Logout</button>`;
+  const q=new QRCode($('#qr'),{width:200,height:200});let ip='',ipT=0;
+  const draw=async()=>{if(Date.now()-ipT>60000){ip=await myIP();ipT=Date.now()}q.makeCode(`${s.id}|${Date.now()}|${ip}`)};
+  draw();timer=setInterval(draw,20000);
+  onSnapshot(doc(db,'attendance',today()+'_'+s.id),d=>$('#st').textContent=d.exists()?'✅ Today: Present':'Today: Not marked');
+  onSnapshot(query(collection(db,'announcements'),orderBy('ts','desc'),limit(30)),sn=>{
+    const seen=+localStorage.seen||0;let mx=seen;
+    sn.docChanges().forEach(c=>{if(c.type==='added'){const a=c.doc.data();if(a.ts>seen)notify(a.title,a.body);mx=Math.max(mx,a.ts)}});
+    localStorage.seen=mx;
+    $('#an').innerHTML=sn.docs.map(d=>{const a=d.data();return `<div class="card"><b>${esc(a.title)}</b><p>${esc(a.body)}</p><small class="m">${new Date(a.ts).toLocaleString()}</small></div>`}).join('')||'<p class="m">No announcements</p>';
+  });
+  $('#out').onclick=()=>{clearInterval(timer);localStorage.clear();location.reload()};
+}
+s?home():login();
+checkUpdate('student');
+</script></body></html>
