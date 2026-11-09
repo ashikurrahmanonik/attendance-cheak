@@ -43,12 +43,19 @@ jobs:
           npx cap init "${{ matrix.role == 'admin' && 'SCTC Admin' || 'SCTC Student' }}" com.attendance.${{ matrix.role }} --web-dir www
           npx cap add android
           cp -r icons/mipmap-* android/app/src/main/res/
+          D=android/app/src/main/java/com/attendance/${{ matrix.role }}
+          mkdir -p "$D" android/app/src/main/res/xml
+          for f in ApkInstallerPlugin MainActivity; do sed "s/__PKG__/com.attendance.${{ matrix.role }}/g" native/$f.java > "$D/$f.java"; done
+          cat > android/app/src/main/res/xml/file_paths.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths xmlns:android="http://schemas.android.com/apk/res/android"><cache-path name="update" path="update/"/><external-path name="my_images" path="."/><cache-path name="my_cache_images" path="."/></paths>
+          XML
           if [ "${{ matrix.role }}" = student ]; then
             G=""; for g in "$GITHUB_WORKSPACE/google-services.json" google-services.json; do [ -f "$g" ] && { G="$g"; break; }; done
             if [ -n "$G" ]; then cp "$G" android/app/google-services.json; echo "Push: google-services.json added"; else echo "::warning::google-services.json nai, tai student app e push notification kaj korbe na (baki sob thik cholbe)"; fi
           fi
           for f in $(find android/app/src/main/res -name splash.png); do case "$f" in *land*) cp icons/splash_land.png "$f";; *) cp icons/splash_port.png "$f";; esac; done
-          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.VIBRATE"/><application#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.VIBRATE"/><uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/><application#' android/app/src/main/AndroidManifest.xml
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/;s/versionName \"1.0\"/versionName \"$VER\"/" android/app/build.gradle
           cp -r icons/notif/drawable-* android/app/src/main/res/
           sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat"/></application>#' android/app/src/main/AndroidManifest.xml
@@ -64,6 +71,17 @@ jobs:
                       keyPassword "android"
                   }
               }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                      minifyEnabled false
+                      debuggable false
+                  }
+              }
+              lint {
+                  checkReleaseBuilds false
+                  abortOnError false
+              }
           }
           EOF
           cd android
@@ -75,8 +93,8 @@ jobs:
           [ -f /tmp/gradle.zip ] || { echo "::error::Gradle download hoy ni, pore Re-run korun"; exit 1; }
           sed -i 's#^distributionUrl=.*#distributionUrl=file\\:///tmp/gradle.zip#' gradle/wrapper/gradle-wrapper.properties
           chmod +x gradlew
-          for i in 1 2 3; do ./gradlew assembleDebug && break; echo "Try $i failed"; [ $i = 3 ] && exit 1; sleep 15; done
-          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/${{ matrix.role }}.apk"
+          for i in 1 2 3; do ./gradlew assembleRelease && break; echo "Try $i failed"; [ $i = 3 ] && exit 1; sleep 15; done
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/${{ matrix.role }}.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.role }}
